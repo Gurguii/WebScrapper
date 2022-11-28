@@ -49,8 +49,6 @@ class ArgumentParser():
                     self.rules = argv[n+1]
                 case "-sc" | "--status-codes":
                     self.validStatusCodes = tuple(argv[n+1].split(','))
-                case "-ext" | "--extensions":
-                    self.extensions = tuple(argv[n+1].split(','))
                 case _:
                     # Default case if no match
                     continue
@@ -87,9 +85,6 @@ class WebScrapper(ArgumentParser):
                 next(file)
 
             for w in [next(file).strip() for i in range (Lamount)]:
-                if w == '':
-                    print(f"begl => {begL}")
-                    exit(0)
                 if stop_threads_event.is_set():return
 
                 ans = get(self.url+w)
@@ -107,9 +102,9 @@ class WebScrapper(ArgumentParser):
                         ans = get(url)
                         requests_made+=1
                         if ans.status_code in self.validStatusCodes: 
-                            self.addFoundDir(w,ans)
+                            self.addFoundDir(f"{w}.{ext}",ans)
                             if self.rules:
-                                self.extractData(w,BeautifulSoup(ans.content,'html.parser').text)
+                                self.extractData(f"{w}.{ext}",BeautifulSoup(ans.content,'html.parser').text)
         # Thread ended
         self.finishedThreads+=1
 
