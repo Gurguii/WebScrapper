@@ -1,4 +1,5 @@
 import signal
+from os import path
 from requests import get
 from re import compile, findall
 from threading import Thread, Event
@@ -11,7 +12,7 @@ stop_threads_event = Event()
 requests_made = 0
 
 def ctrlC(i,f):
-    print("User pressed ctrl+c ...")
+    print("\n\nUser pressed ctrl+c ...")
     ws.printInfo()
     stop_threads_event.set()
     exit(0)
@@ -29,16 +30,19 @@ class ArgumentParser():
         self.threadC = 10
         self.port = 80
         self.validStatusCodes = (200,301)
+        self.wordlist = '' # file
+        self.rules = '' # file
+        self.extensions = '' # tuple
         for n in range(1,len(argv)):
             match argv[n]:
                 case "-h" | "--help":
                     help()
                 case "-p" | "--port":
-                    self.port= int(argv[n+1])
+                    self.port= argv[n+1]
                 case "-wl" | "--wordlist":
                     self.wordlist = argv[n+1]
                 case "-t" | "--threads":
-                    self.threadC= int(argv[n+1])
+                    self.threadC = argv[n+1]
                 case "-ext" | "--extensions":
                     self.extensions = tuple(argv[n+1].split(','))
                 case "-r" | "--rules":
@@ -50,7 +54,23 @@ class ArgumentParser():
                 case _:
                     # Default case if no match
                     continue
-        # Set url after parsing arguments in case we have to change default port 
+        # Do some sanitization
+        if not self.wordlist:
+            print("[+] Wordlist must be supplied")
+            exit(0)
+
+        if not path.exists(self.wordlist):
+            print(f"[+] Wordlist {self.wordlist} doesn't exist")
+            exit(0)
+
+        try:
+            self.port = int(self.port)
+            self.threadC = int(self.threadC)
+        except ValueError as err:
+            print(f"[+] Port and thread amount must be integers => {err}")
+            exit(0)
+            
+        # Set url after parsing/sanitizing arguments in case we have to end the execution or change default port 
         self.url = f"http://{self.target}:{self.port}/"
 
 class WebScrapper(ArgumentParser):
@@ -67,7 +87,9 @@ class WebScrapper(ArgumentParser):
                 next(file)
 
             for w in [next(file).strip() for i in range (Lamount)]:
-
+                if w == '':
+                    print(f"begl => {begL}")
+                    exit(0)
                 if stop_threads_event.is_set():return
 
                 ans = get(self.url+w)
@@ -101,15 +123,10 @@ class WebScrapper(ArgumentParser):
                 self.dataExtracted[self.target][word]["Data extracted"] = data
 
     def printInfo(self):
-        try:
-            del self.dataExtracted[self.target]['']
-        except:
-            pass
         print("\n"+dumps(self.dataExtracted, sort_keys=True, indent=4))
 
-
     def runThreads(self):
-        fileLines = 0; begL = 0; mythreads = []; 
+        fileLines = 0; begL = 1; mythreads = []; 
         for i in open(self.wordlist):fileLines+=1
         linesPerThread = int(fileLines/self.threadC)
 
@@ -117,20 +134,22 @@ class WebScrapper(ArgumentParser):
         for i in range (self.threadC-1):
             mythreads.append(Thread(target=self.pathBuster,args=(begL,linesPerThread)))
             begL+=linesPerThread
-        mythreads.append(Thread(target=self.pathBuster,args=(begL,linesPerThread+int(fileLines%ws.threadC))))
+        mythreads.append(Thread(target=self.pathBuster,args=(begL-1,linesPerThread+int(fileLines%ws.threadC))))
 
-        print("[+] Starting threads...")
+        print(f"[!] Starting {self.threadC} threads...")
+
         # Start threads
         for th in mythreads:
             th.start()
 
         # Keep main thread sleeping until others end or ctrl+c
         # is pressed, in that case the stop_threads_event will
-        # be set and threads will terminate their execution(line 71)           
+        # be set and threads will terminate their execution(line 71)
+        total_requests = fileLines+(fileLines*len(self.extensions))           
         while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
-            print("Requests:",requests_made,end='\r')
+            print(f"Requests: {requests_made}/{total_requests}",end='\r')
             sleep(0.5)
-
+        print(f"Requests: {requests_made}/{total_requests}")
 
 # ctrl+c signal handler
 signal.signal(signal.SIGINT,ctrlC)
