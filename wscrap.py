@@ -1,4 +1,6 @@
 import signal
+import numpy as np
+import sys
 from os import path
 from requests import get
 from re import compile, findall
@@ -7,32 +9,35 @@ from bs4 import BeautifulSoup
 from sys import argv
 from time import sleep
 from json import dumps
+from functools import reduce
 
 stop_threads_event = Event()
 requests_made = 0
+ISFILE = lambda file : path.exists(file)
 
 def ctrlC(i,f):
     print("\n\nUser pressed ctrl+c ...")
     ws.printInfo()
     stop_threads_event.set()
-    exit(0)
+    sys.exit()
 
 def help():
     print(f"Usage: {argv[0]} <options> <target>")
-    exit(0)
+    sys.exit()
 
 class ArgumentParser():
     def __init__(self):
         if len(argv) == 1:help()
         # Set target and default values
         # of options that have'em
-        self.target = argv[-1]
+        self.targets = argv[-1]
         self.threadC = 10
         self.port = 80
         self.validStatusCodes = (200,301)
         self.wordlist = '' # file
         self.rules = '' # file
         self.extensions = '' # tuple
+        self.url = ''
         for n in range(1,len(argv)):
             match argv[n]:
                 case "-h" | "--help":
@@ -55,95 +60,95 @@ class ArgumentParser():
         # Do some sanitization
         if not self.wordlist:
             print("[+] Wordlist must be supplied")
-            exit(0)
+            sys.exit()
 
-        if not path.exists(self.wordlist):
+        if not ISFILE(self.wordlist):
             print(f"[+] Wordlist {self.wordlist} doesn't exist")
-            exit(0)
+            sys.exit()
 
         try:
             self.port = int(self.port)
             self.threadC = int(self.threadC)
         except ValueError as err:
             print(f"[+] Port and thread amount must be integers => {err}")
-            exit(0)
-            
-        # Set url after parsing/sanitizing arguments in case we have to end the execution or change default port 
-        self.url = f"http://{self.target}:{self.port}/"
+            sys.exit()
+
+        if ISFILE(self.targets):
+            self.targets = reduce(lambda x,y : x+y, (bytes.decode(x) for x in np.memmap(self.targets,dtype='c'))).split()            
 
 class WebScrapper(ArgumentParser):
     def __init__(self):
         super().__init__()
-        self.dataExtracted = {self.target: {}}
+        self.currentTarget = self.targets[0]
+        self.dataExtracted = {}
         self.finishedThreads = 0
-
-    def pathBuster(self, begL, Lamount):
+    def pathBuster(self, arr):
         global requests_made
-        with open(self.wordlist) as file:
+        for w in arr:
+            # Stop thread execution if user presses ctrl+c
+            if stop_threads_event.is_set():return
 
-            for i in range(begL):
-                next(file)
+            ans = get(self.url+w);
+            sc = ans.status_code;
+            requests_made+=1
 
-            for w in [next(file).strip() for i in range (Lamount)]:
-                if stop_threads_event.is_set():return
-
-                ans = get(self.url+w)
-                sc = ans.status_code
-                requests_made+=1
-
-                if sc in self.validStatusCodes: 
-                    self.addFoundDir(w,ans)
-                    if self.rules:
-                        self.extractData(w,BeautifulSoup(ans.content,'html.parser').text)
-                
-                if self.extensions:
-                    for ext in self.extensions:
-                        url = f"http://{self.target}:{self.port}/{w}.{ext}"
-                        ans = get(url)
-                        requests_made+=1
-                        if ans.status_code in self.validStatusCodes: 
-                            self.addFoundDir(f"{w}.{ext}",ans)
-                            if self.rules:
-                                self.extractData(f"{w}.{ext}",BeautifulSoup(ans.content,'html.parser').text)
+            if sc in self.validStatusCodes: 
+                self.addFoundDir(w,ans)
+                if self.rules:
+                    self.extractData(w,BeautifulSoup(ans.content,'html.parser').text)
+            
+            if self.extensions:
+                for ext in self.extensions:
+                    url = f"{self.url}/{w}.{ext}"
+                    ans = get(url)
+                    requests_made+=1
+                    if ans.status_code in self.validStatusCodes: 
+                        self.addFoundDir(f"{w}.{ext}",ans)
+                        if self.rules:
+                            self.extractData(f"{w}.{ext}",BeautifulSoup(ans.content,'html.parser').text)
         # Thread ended
         self.finishedThreads+=1
 
     def addFoundDir(self,word,ans):
-        self.dataExtracted[self.target][word] = {"Status code":ans.status_code,"Content type":ans.headers['Content-type'],"Length":ans.headers['Content-Length']}
+        self.dataExtracted[self.currentTarget][word] = {"Status code":ans.status_code,"Content type":ans.headers['Content-type'],"Length":ans.headers['Content-Length']}
 
     def extractData(self,word,content):
         for rule in open(self.rules):
             data = findall(compile(rule),content)
             if data:
-                self.dataExtracted[self.target][word]["Data extracted"] = data
+                self.dataExtracted[self.currentTarget][word]["Data extracted"] = data
 
     def printInfo(self):
         print("\n"+dumps(self.dataExtracted, sort_keys=True, indent=4))
 
     def runThreads(self):
-        fileLines = 0; begL = 1; mythreads = []; 
-        for i in open(self.wordlist):fileLines+=1
-        linesPerThread = int(fileLines/self.threadC)
+        # Numpy implementation
+        wlArray = reduce(lambda x,y : x+y, (bytes.decode(x) for x in np.memmap(self.wordlist,dtype='c'))).split()
+        fileLines = len(wlArray)
+        total_requests = len(self.targets)*(fileLines+(fileLines*len(self.extensions))) 
 
-        # Add amount of threads required
-        for i in range (self.threadC-1):
-            mythreads.append(Thread(target=self.pathBuster,args=(begL,linesPerThread)))
-            begL+=linesPerThread
-        mythreads.append(Thread(target=self.pathBuster,args=(begL-1,linesPerThread+int(fileLines%ws.threadC))))
+        for t in self.targets:
+            print(f"[+] - Starting {self.threadC} threads on target {t}")
 
-        print(f"[!] Starting {self.threadC} threads...")
+            self.url = f"http://{t}:{self.port}/"; self.finishedThreads = 0; self.currentTarget = t; self.dataExtracted[self.currentTarget] = {}
+            wpt = int(fileLines/self.threadC); begL = 0; mythreads = []
 
-        # Start threads
-        for th in mythreads:
-            th.start()
+            for i in range(self.threadC-1):
+                mythreads.append(Thread(target=self.pathBuster,args=(np.array(wlArray[begL:begL+wpt]),)))
+                begL+=wpt
+            mythreads.append(Thread(target=self.pathBuster,args=(np.array(wlArray[begL:]),)))
 
-        # Keep main thread sleeping until others end or ctrl+c
-        # is pressed, in that case the stop_threads_event will
-        # be set and threads will terminate their execution(line 71)
-        total_requests = fileLines+(fileLines*len(self.extensions))           
-        while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
-            print(f"Requests: {requests_made}/{total_requests}",end='\r')
-            sleep(0.5)
+            for th in mythreads:
+                th.start()
+
+            # Keep main thread sleeping until others end or ctrl+c
+            # is pressed, in that case the stop_threads_event will
+            # be set and threads will terminate their execution(line 88)
+                      
+            while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
+                print(f"Requests: {requests_made}/{total_requests}",end='\r')
+                sleep(1)
+            continue
         print(f"Requests: {requests_made}/{total_requests}")
 
 # ctrl+c signal handler
