@@ -36,28 +36,30 @@ class ArgumentParser():
         self.extensions = '' # csv
         self.protocol = 'http' # http | https - varies with -ssl option
         self.url = '' #
-        for n in range(1,len(sys.argv)):
+        n = 1
+        while n < len(sys.argv)-1:
             match sys.argv[n]:
                 case "-h" | "--help":
-                    help()
+                    help();n+=1
                 case "-p" | "--port":
-                    self.port= sys.argv[n+1]
+                    self.port= sys.argv[n+1];n+=2
                 case "-wl" | "--wordlist":
-                    self.wordlist = sys.argv[n+1]
+                    self.wordlist = sys.argv[n+1];n+=2
                 case "-t" | "--threads":
-                    self.threadC = sys.argv[n+1]
+                    self.threadC = sys.argv[n+1];n+=2
                 case "-ext" | "--extensions":
-                    self.extensions = tuple(sys.argv[n+1].split(','))
+                    self.extensions = tuple(sys.argv[n+1].split(','));n+=2
                 case "-r" | "--rules":
-                    self.rules = sys.argv[n+1]
+                    self.rules = sys.argv[n+1];n+=2
                 case "-sc" | "--status-codes":
-                    self.validStatusCodes = tuple(sys.argv[n+1].split(','))
+                    self.validStatusCodes = tuple(sys.argv[n+1].split(','));n+=2
                 case "-ssl" | "--ssl":
                     disable_warnings()
                     self.protocol = 'https'
+                    n+=1
                 case _:
-                    # Default case if no match
-                    continue
+                    print(f"Option '{sys.argv[n]}' doesn't exist")
+                    sys.exit()
         # Do some sanitization
         if not self.wordlist:
             print("[+] Wordlist must be supplied")
@@ -67,9 +69,11 @@ class ArgumentParser():
             print(f"[+] Wordlist {self.wordlist} doesn't exist")
             sys.exit()
 
-        if not ISFILE(self.rules) and self.rules:
-            print(f"[+] Rule file {self.rules} doesn't exist")
-            sys.exit()
+        if ISFILE(self.rules):
+            self.rules = tuple(open(self.rules).read().split())
+        else:
+            self.rules = tuple(self.rules.split(','))
+            
 
         try:
             self.port = int(self.port)
@@ -146,11 +150,12 @@ class WebScrapper(ArgumentParser):
     
     def extractData(self,path,ans):
         data = []
-        for rule in open(self.rules):
-            print(f"Rule => {rule}")
-            data.append(findall(compile(rule),BeautifulSoup(ans.content,'html.parser').text))    
+        for rule in self.rules:
+            matches = findall(compile(rule),BeautifulSoup(ans.content,'html.parser').text)
+            if matches:
+                data.append((rule," ".join(matches)))    
         if data:
-            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
+            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length'],'Data extracted':data})
         else:
             self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
 
