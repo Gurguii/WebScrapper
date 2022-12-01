@@ -67,7 +67,7 @@ class ArgumentParser():
             print(f"[+] Wordlist {self.wordlist} doesn't exist")
             sys.exit()
 
-        if not ISFILE(self.rules):
+        if not ISFILE(self.rules) and self.rules:
             print(f"[+] Rule file {self.rules} doesn't exist")
             sys.exit()
 
@@ -93,7 +93,6 @@ class WebScrapper(ArgumentParser):
 
     def pathBuster(self, arr):
         if self.extensions and self.rules:
-            print("1")
             for w in arr:
                 if stop_threads_event.is_set(): return
                 ans = get(f"{self.url}{w}",verify=False)
@@ -109,9 +108,8 @@ class WebScrapper(ArgumentParser):
                         self.extractData(f"{w}.{ext}",ans)
                 continue      
         elif self.extensions and not self.rules:
-            print("2")
             for w in arr:
-                if stop_threads_event.set(): return
+                if stop_threads_event.is_set(): return
                 ans = get(f"{self.url}{w}",verify=False)
                 self.requestsMade+=1
 
@@ -125,19 +123,16 @@ class WebScrapper(ArgumentParser):
                         self.addFoundDir(f"{w}.{ext}",ans)
                 continue
         elif not self.extensions and self.rules:
-            print("3")
             for w in arr:
-                if stop_threads_event.set(): return
+                if stop_threads_event.is_set(): return
                 ans = get(f"{self.url}{w}",verify=False)
-                self.requestsMade+=1
-                
                 if ans.status_code in self.validStatusCodes:
                     self.extractData(w,ans)
+                self.requestsMade+=1
                 continue
         elif not self.extensions and not self.rules:
-            print("4")
             for w in arr:
-                if stop_threads_event.set(): return
+                if stop_threads_event.is_set(): return
                 ans = get(f"{self.url}{w}",verify=False)
                 self.requestsMade+=1
                 if ans.status_code in self.validStatusCodes:
@@ -152,8 +147,9 @@ class WebScrapper(ArgumentParser):
     def extractData(self,path,ans):
         data = []
         for rule in open(self.rules):
+            print(f"Rule => {rule}")
             data.append(findall(compile(rule),BeautifulSoup(ans.content,'html.parser').text))    
-        if data: 
+        if data:
             self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
         else:
             self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
@@ -183,7 +179,6 @@ class WebScrapper(ArgumentParser):
             # Keep main thread sleeping until others end or ctrl+c
             # is pressed, in that case the stop_threads_event will
             # be set and threads will terminate their execution(line 91)
-                      
             while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
                 print(f"Requests: {self.requestsMade}/{total_requests}",end='\r')
                 sleep(1)
