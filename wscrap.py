@@ -1,18 +1,15 @@
 import signal
-import numpy as np
 import sys
 from os import path
 from requests import get
 from re import compile, findall
 from threading import Thread, Event
 from bs4 import BeautifulSoup
-from sys import argv
 from time import sleep
 from json import dumps
-from functools import reduce
+from urllib3 import disable_warnings
 
 stop_threads_event = Event()
-requests_made = 0
 ISFILE = lambda file : path.exists(file)
 
 def ctrlC(i,f):
@@ -22,38 +19,42 @@ def ctrlC(i,f):
     sys.exit()
 
 def help():
-    print(f"Usage: {argv[0]} <options> <target>")
+    print(f"Usage: {sys.argv[0]} <options> <target>")
     sys.exit()
 
 class ArgumentParser():
     def __init__(self):
-        if len(argv) == 1:help()
+        if len(sys.argv) == 1:help()
         # Set target and default values
         # of options that have'em
-        self.targets = argv[-1]
-        self.threadC = 10
-        self.port = 80
-        self.validStatusCodes = (200,301)
+        self.targets = sys.argv[-1] # file | string | csv
+        self.threadC = 10 # int
+        self.port = 80 # int
+        self.validStatusCodes = (200,301) # int | csv
         self.wordlist = '' # file
-        self.rules = '' # file
-        self.extensions = '' # tuple
-        self.url = ''
-        for n in range(1,len(argv)):
-            match argv[n]:
+        self.rules = '' # file - will be stored in a tuple
+        self.extensions = '' # csv
+        self.protocol = 'http' # http | https - varies with -ssl option
+        self.url = '' #
+        for n in range(1,len(sys.argv)):
+            match sys.argv[n]:
                 case "-h" | "--help":
                     help()
                 case "-p" | "--port":
-                    self.port= argv[n+1]
+                    self.port= sys.argv[n+1]
                 case "-wl" | "--wordlist":
-                    self.wordlist = argv[n+1]
+                    self.wordlist = sys.argv[n+1]
                 case "-t" | "--threads":
-                    self.threadC = argv[n+1]
+                    self.threadC = sys.argv[n+1]
                 case "-ext" | "--extensions":
-                    self.extensions = tuple(argv[n+1].split(','))
+                    self.extensions = tuple(sys.argv[n+1].split(','))
                 case "-r" | "--rules":
-                    self.rules = argv[n+1]
+                    self.rules = sys.argv[n+1]
                 case "-sc" | "--status-codes":
-                    self.validStatusCodes = tuple(argv[n+1].split(','))
+                    self.validStatusCodes = tuple(sys.argv[n+1].split(','))
+                case "-ssl" | "--ssl":
+                    disable_warnings()
+                    self.protocol = 'https'
                 case _:
                     # Default case if no match
                     continue
@@ -61,9 +62,13 @@ class ArgumentParser():
         if not self.wordlist:
             print("[+] Wordlist must be supplied")
             sys.exit()
-
+        
         if not ISFILE(self.wordlist):
             print(f"[+] Wordlist {self.wordlist} doesn't exist")
+            sys.exit()
+
+        if not ISFILE(self.rules):
+            print(f"[+] Rule file {self.rules} doesn't exist")
             sys.exit()
 
         try:
@@ -74,89 +79,125 @@ class ArgumentParser():
             sys.exit()
 
         if ISFILE(self.targets):
-            self.targets = reduce(lambda x,y : x+y, (bytes.decode(x) for x in np.memmap(self.targets,dtype='c'))).split()            
+            self.targets = tuple(open(self.targets).read().split())
+        else:
+            self.targets = tuple(self.targets.split(','))
 
 class WebScrapper(ArgumentParser):
     def __init__(self):
         super().__init__()
-        self.currentTarget = self.targets[0]
-        self.dataExtracted = {}
+        self.currentTarget = ''
+        self.dataExtracted = []
         self.finishedThreads = 0
+        self.requestsMade = 0
+
     def pathBuster(self, arr):
-        global requests_made
-        for w in arr:
-            # Stop thread execution if user presses ctrl+c
-            if stop_threads_event.is_set():return
+        if self.extensions and self.rules:
+            print("1")
+            for w in arr:
+                if stop_threads_event.is_set(): return
+                ans = get(f"{self.url}{w}",verify=False)
+                self.requestsMade+=1
 
-            ans = get(self.url+w);
-            sc = ans.status_code;
-            requests_made+=1
+                if ans.status_code in self.validStatusCodes:
+                    self.extractData(w,ans)
 
-            if sc in self.validStatusCodes: 
-                self.addFoundDir(w,ans)
-                if self.rules:
-                    self.extractData(w,BeautifulSoup(ans.content,'html.parser').text)
-            
-            if self.extensions:
                 for ext in self.extensions:
-                    url = f"{self.url}/{w}.{ext}"
-                    ans = get(url)
-                    requests_made+=1
-                    if ans.status_code in self.validStatusCodes: 
+                    ans = get(f"{self.url}{w}.{ext}",verify=False)
+                    self.requestsMade+=1
+                    if ans.status_code in self.validStatusCodes:
+                        self.extractData(f"{w}.{ext}",ans)
+                continue      
+        elif self.extensions and not self.rules:
+            print("2")
+            for w in arr:
+                if stop_threads_event.set(): return
+                ans = get(f"{self.url}{w}",verify=False)
+                self.requestsMade+=1
+
+                if ans.status_code in self.validStatusCodes:
+                    self.addFoundDir(w,ans)
+
+                for ext in self.extensions:
+                    ans = get(f"{self.url}{w}.{ext}")
+                    self.requestsMade+=1
+                    if ans.status_code in self.validStatusCodes:
                         self.addFoundDir(f"{w}.{ext}",ans)
-                        if self.rules:
-                            self.extractData(f"{w}.{ext}",BeautifulSoup(ans.content,'html.parser').text)
+                continue
+        elif not self.extensions and self.rules:
+            print("3")
+            for w in arr:
+                if stop_threads_event.set(): return
+                ans = get(f"{self.url}{w}",verify=False)
+                self.requestsMade+=1
+                
+                if ans.status_code in self.validStatusCodes:
+                    self.extractData(w,ans)
+                continue
+        elif not self.extensions and not self.rules:
+            print("4")
+            for w in arr:
+                if stop_threads_event.set(): return
+                ans = get(f"{self.url}{w}",verify=False)
+                self.requestsMade+=1
+                if ans.status_code in self.validStatusCodes:
+                    self.addFoundDir(w,ans)
+                continue
         # Thread ended
         self.finishedThreads+=1
 
-    def addFoundDir(self,word,ans):
-        self.dataExtracted[self.currentTarget][word] = {"Status code":ans.status_code,"Content type":ans.headers['Content-type'],"Length":ans.headers['Content-Length']}
-
-    def extractData(self,word,content):
+    def addFoundDir(self,path,ans):
+        self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
+    
+    def extractData(self,path,ans):
+        data = []
         for rule in open(self.rules):
-            data = findall(compile(rule),content)
-            if data:
-                self.dataExtracted[self.currentTarget][word]["Data extracted"] = data
+            data.append(findall(compile(rule),BeautifulSoup(ans.content,'html.parser').text))    
+        if data: 
+            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
+        else:
+            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
 
     def printInfo(self):
-        print("\n"+dumps(self.dataExtracted, sort_keys=True, indent=4))
+        print("\n"+dumps(self.dataExtracted, sort_keys=False, indent=4))
 
     def runThreads(self):
-        # Numpy implementation
-        wlArray = reduce(lambda x,y : x+y, (bytes.decode(x) for x in np.memmap(self.wordlist,dtype='c'))).split()
+        wlArray = tuple(open(self.wordlist).read().split())
         fileLines = len(wlArray)
         total_requests = len(self.targets)*(fileLines+(fileLines*len(self.extensions))) 
-
+        print(f"[+] - Starting with {self.threadC} threads")
         for t in self.targets:
-            print(f"[+] - Starting {self.threadC} threads on target {t}")
+            print(f"[+] - Current target => {t}")
 
-            self.url = f"http://{t}:{self.port}/"; self.finishedThreads = 0; self.currentTarget = t; self.dataExtracted[self.currentTarget] = {}
+            self.url = f"{self.protocol}://{t}:{self.port}/"; self.finishedThreads = 0; self.currentTarget = {'target':t,'found routes':[]};
             wpt = int(fileLines/self.threadC); begL = 0; mythreads = []
 
             for i in range(self.threadC-1):
-                mythreads.append(Thread(target=self.pathBuster,args=(np.array(wlArray[begL:begL+wpt]),)))
+                mythreads.append(Thread(target=self.pathBuster,args=(wlArray[begL:begL+wpt],)))
                 begL+=wpt
-            mythreads.append(Thread(target=self.pathBuster,args=(np.array(wlArray[begL:]),)))
+            mythreads.append(Thread(target=self.pathBuster,args=(wlArray[begL:],)))
 
             for th in mythreads:
                 th.start()
 
             # Keep main thread sleeping until others end or ctrl+c
             # is pressed, in that case the stop_threads_event will
-            # be set and threads will terminate their execution(line 88)
+            # be set and threads will terminate their execution(line 91)
                       
             while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
-                print(f"Requests: {requests_made}/{total_requests}",end='\r')
+                print(f"Requests: {self.requestsMade}/{total_requests}",end='\r')
                 sleep(1)
+
+            # After threads finish, before moving onto the next target, append currentTarget object to dataExtracted
+            self.dataExtracted.append(self.currentTarget)
             continue
-        print(f"Requests: {requests_made}/{total_requests}")
+        print(f"Requests: {self.requestsMade}/{total_requests}")
 
 # ctrl+c signal handler
 signal.signal(signal.SIGINT,ctrlC)
-
-# Create an WebScrapper instance that will call
-# ArgumentParser constructor to parse user
-# arguments and start threads. 
+# Create an WebScrapper instance that will parse arguments
 ws = WebScrapper()
+# Start threads
 ws.runThreads()
+# Print extracted data
 ws.printInfo()
