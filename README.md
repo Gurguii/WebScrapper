@@ -30,3 +30,4 @@ I'm willing to add stuff such as being able to receive a bunch of targets, maybe
 #### -ext / --extensions <comma,separated,extensions> - Do an additional /<word>.<extension> request for each extension  
 #### -r / --rules <file> - Whenever a valid status code is gotten from a path, get content matching any of the rules in given file  
 #### -sc / --status-codes <comma,separated,ints> - Sets valid status codes, default 200 and 301
+#### -ssl / --ssl - Do https requests (This does not change port to 443)
