@@ -1,5 +1,4 @@
 import signal
-import sys
 from os import path
 from requests import get
 from re import compile, findall
@@ -8,78 +7,84 @@ from bs4 import BeautifulSoup
 from time import sleep
 from json import dumps
 from urllib3 import disable_warnings
+from sys import exit as sysex, argv
 
-stop_threads_event = Event()
+STOP_THREADS_EVENT = Event()
 ISFILE = lambda file : path.exists(file)
 
 def ctrlC(i,f):
     print("\n\nUser pressed ctrl+c ...")
     ws.printInfo()
-    stop_threads_event.set()
-    sys.exit()
+    STOP_THREADS_EVENT.set()
+    sysex()
 
 def help():
-    print(f"Usage: {sys.argv[0]} <options> <target>")
-    sys.exit()
+    print(f"Usage: {argv[0]} <options> <target>")
+    print("Note: -wl / --wordlist option is mandatory")
+    sysex()
 
 class ArgumentParser():
     def __init__(self):
-        if len(sys.argv) == 1:help()
-        # Set target and default values
-        # of options that have'em
-        self.targets = sys.argv[-1] # file | string | csv
+        if len(argv) == 1:help()
+        self.targets = '' # file | string | csv  [!]MANDATORY OPTION[!]
+        self.wordlist = '' # file [!]MANDATORY OPTION[!]
         self.threadC = 10 # int
         self.port = 80 # int
         self.validStatusCodes = (200,301) # int | csv
-        self.wordlist = '' # file
         self.rules = '' # file - will be stored in a tuple
         self.extensions = '' # csv
         self.protocol = 'http' # http | https - varies with -ssl option
-        self.url = '' #
-        n = 1
-        while n < len(sys.argv)-1:
-            match sys.argv[n]:
+        n = 0; args = argv[1:]
+        while n < len(args):
+            match args[n]:
                 case "-h" | "--help":
                     help();n+=1
+                case "-target" | "--target":
+                    self.targets = args[n+1];n+=2
                 case "-p" | "--port":
-                    self.port= sys.argv[n+1];n+=2
+                    self.port= args[n+1];n+=2
                 case "-wl" | "--wordlist":
-                    self.wordlist = sys.argv[n+1];n+=2
+                    self.wordlist = args[n+1];n+=2
                 case "-t" | "--threads":
-                    self.threadC = sys.argv[n+1];n+=2
+                    self.threadC = args[n+1];n+=2
                 case "-ext" | "--extensions":
-                    self.extensions = tuple(sys.argv[n+1].split(','));n+=2
+                    self.extensions = tuple(args[n+1].split(','));n+=2
                 case "-r" | "--rules":
-                    self.rules = sys.argv[n+1];n+=2
+                    self.rules = args[n+1];n+=2
                 case "-sc" | "--status-codes":
-                    self.validStatusCodes = tuple(sys.argv[n+1].split(','));n+=2
+                    self.validStatusCodes = tuple(args[n+1].split(','));n+=2
                 case "-ssl" | "--ssl":
                     disable_warnings()
                     self.protocol = 'https'
                     n+=1
                 case _:
-                    print(f"Option '{sys.argv[n]}' doesn't exist")
-                    sys.exit()
-        # Do some sanitization
+                    print(f"Option '{args[n]}' doesn't exist")
+                    sysex()
+
+        # Targets option is mandatory
+        if not self.targets:
+            print("[+] Target/s must be supplied")
+            sysex()
+
+        # Wordlist option is mandatory
         if not self.wordlist:
             print("[+] Wordlist must be supplied")
-            sys.exit()
+            sysex()
         
         if not ISFILE(self.wordlist):
             print(f"[+] Wordlist {self.wordlist} doesn't exist")
-            sys.exit()
+            sysex()
 
         if ISFILE(self.rules):
             self.rules = tuple(open(self.rules).read().split())
         else:
-            self.rules = self.rules.split(',')
-
+            self.rules = self.rules.split(',') if ',' in self.rules else ()
         try:
             self.port = int(self.port)
             self.threadC = int(self.threadC)
         except ValueError as err:
             print(f"[+] Port and thread amount must be integers => {err}")
-            sys.exit()
+            sysex()
 
         if ISFILE(self.targets):
             self.targets = tuple(open(self.targets).read().split())
@@ -93,54 +98,72 @@ class WebScrapper(ArgumentParser):
         self.dataExtracted = []
         self.finishedThreads = 0
         self.requestsMade = 0
+        self.__setPathBuster(len(self.extensions),len(self.rules))
 
-    def pathBuster(self, arr):
-        if self.extensions and self.rules:
-            for w in arr:
-                if stop_threads_event.is_set(): return
-                ans = get(f"{self.url}{w}",verify=False)
+    # the 1/0 means EXTENSIONS | RULES
+    # 11 means user inputted extensions and rules // 00 means user didn't input extra extensions or rules etc. 
+    # I did this to try and achieve the best performance since each
+    # function does only what it needs to and doesn't waste time doing 
+    # dumb checks(except the STOP_THREADS_EVENT hehe)
+    def __setPathBuster(self,ext,rul):
+        if ext and rul:
+            self.mode = self.pathBuster11
+        elif ext and not rul:
+            self.mode = self.pathBuster10
+        elif not ext and rul:
+            self.mode = self.pathBuster01
+        elif not ext and not rul:
+            self.mode = self.pathBuster00
+
+    def pathBuster11(self,arr):
+        for w in arr:
+            if STOP_THREADS_EVENT.is_set(): return
+            ans = get(f"{self.url}{w}",verify=False)
+            self.requestsMade+=1
+            if ans.status_code in self.validStatusCodes:
+                self.extractData(w,ans)
+            for ext in self.extensions:
+                ans = get(f"{self.url}{w}.{ext}",verify=False)
                 self.requestsMade+=1
-
                 if ans.status_code in self.validStatusCodes:
+                    self.extractData(f"{w}.{ext}",ans)
+        self.finishedThreads+=1
+
+    def pathBuster00(self,arr):
+        for w in arr:
+            if STOP_THREADS_EVENT.is_set(): return
+            ans = get(f"{self.url}{w}",verify=False)
+            self.requestsMade+=1
+            if ans.status_code in self.validStatusCodes:
+                self.addFoundDir(w,ans)
+            for ext in self.extensions:
+                ans = get(f"{self.url}{w}.{ext}")
+                self.requestsMade+=1
+                if ans.status_code in self.validStatusCodes:
+                    self.addFoundDir(f"{w}.{ext}",ans)
+        self.finishedThreads+=1
+
+    def pathBuster01(self,arr):
+        for w in arr:
+            if STOP_THREADS_EVENT.is_set(): return
+            ans = get(f"{self.url}{w}",verify=False)
+            if ans.status_code in self.validStatusCodes:
+                self.extractData(w,ans)
+            self.requestsMade+=1
+        self.finishedThreads+=1
+
+    def pathBuster10(self,arr):
+        for w in arr:
+            if STOP_THREADS_EVENT.is_set(): return
+            ans = get(f"{self.url}{w}",verify=False)
+            self.requestsMade+=1
+            if ans.status_code in self.validStatusCodes:
+                self.addFoundDir(w,ans)
+            for ext in self.extensions:
+                ans = get(f"{self.url}{w}.{ext}")
+                self.requestsMade+=1
+                if ans.status_code == 200:
                     self.extractData(w,ans)
-
-                for ext in self.extensions:
-                    ans = get(f"{self.url}{w}.{ext}",verify=False)
-                    self.requestsMade+=1
-                    if ans.status_code in self.validStatusCodes:
-                        self.extractData(f"{w}.{ext}",ans)
-                continue      
-        elif self.extensions and not self.rules:
-            for w in arr:
-                if stop_threads_event.is_set(): return
-                ans = get(f"{self.url}{w}",verify=False)
-                self.requestsMade+=1
-
-                if ans.status_code in self.validStatusCodes:
-                    self.addFoundDir(w,ans)
-
-                for ext in self.extensions:
-                    ans = get(f"{self.url}{w}.{ext}")
-                    self.requestsMade+=1
-                    if ans.status_code in self.validStatusCodes:
-                        self.addFoundDir(f"{w}.{ext}",ans)
-                continue
-        elif not self.extensions and self.rules:
-            for w in arr:
-                if stop_threads_event.is_set(): return
-                ans = get(f"{self.url}{w}",verify=False)
-                if ans.status_code in self.validStatusCodes:
-                    self.extractData(w,ans)
-                self.requestsMade+=1
-                continue
-        elif not self.extensions and not self.rules:
-            for w in arr:
-                if stop_threads_event.is_set(): return
-                ans = get(f"{self.url}{w}",verify=False)
-                self.requestsMade+=1
-                if ans.status_code in self.validStatusCodes:
-                    self.addFoundDir(w,ans)
-                continue
         # Thread ended
         self.finishedThreads+=1
 
@@ -165,7 +188,9 @@ class WebScrapper(ArgumentParser):
         wlArray = tuple(open(self.wordlist).read().split())
         fileLines = len(wlArray)
         total_requests = len(self.targets)*(fileLines+(fileLines*len(self.extensions))) 
+
         print(f"[+] - Starting with {self.threadC} threads")
+
         for t in self.targets:
             print(f"[+] - Current target => {t}")
 
@@ -173,17 +198,17 @@ class WebScrapper(ArgumentParser):
             wpt = int(fileLines/self.threadC); begL = 0; mythreads = []
 
             for i in range(self.threadC-1):
-                mythreads.append(Thread(target=self.pathBuster,args=(wlArray[begL:begL+wpt],)))
+                mythreads.append(Thread(target=self.mode,args=(wlArray[begL:begL+wpt],)))
                 begL+=wpt
-            mythreads.append(Thread(target=self.pathBuster,args=(wlArray[begL:],)))
+            mythreads.append(Thread(target=self.mode,args=(wlArray[begL:],)))
 
             for th in mythreads:
                 th.start()
 
             # Keep main thread sleeping until others end or ctrl+c
-            # is pressed, in that case the stop_threads_event will
+            # is pressed, in that case the STOP_THREADS_EVENT will
             # be set and threads will terminate their execution(line 91)
-            while not stop_threads_event.is_set() and self.finishedThreads != self.threadC:
+            while not STOP_THREADS_EVENT.is_set() and self.finishedThreads != self.threadC:
                 print(f"Requests: {self.requestsMade}/{total_requests}",end='\r')
                 sleep(1)
 
