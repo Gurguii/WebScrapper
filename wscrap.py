@@ -8,13 +8,14 @@ from time import sleep
 from json import dumps
 from urllib3 import disable_warnings
 from sys import exit as sysex, argv
+from time import time
 
 STOP_THREADS_EVENT = Event()
 ISFILE = lambda file : path.exists(file)
+VERIFY = True
 
 def ctrlC(i,f):
     print("\n\nUser pressed ctrl+c ...")
-    ws.printInfo()
     STOP_THREADS_EVENT.set()
     sysex()
 
@@ -55,6 +56,7 @@ class ArgumentParser():
                     self.validStatusCodes = tuple(args[n+1].split(','));n+=2
                 case "-ssl" | "--ssl":
                     disable_warnings()
+                    VERIFY = False
                     self.protocol = 'https'
                     n+=1
                 case _:
@@ -118,57 +120,51 @@ class WebScrapper(ArgumentParser):
     def pathBuster11(self,arr):
         for w in arr:
             if STOP_THREADS_EVENT.is_set(): return
-            ans = get(f"{self.url}{w}",verify=False)
+            ans = get(f"{self.url}{w}",verify=VERIFY)
             self.requestsMade+=1
             if ans.status_code in self.validStatusCodes:
                 self.extractData(w,ans)
             for ext in self.extensions:
-                ans = get(f"{self.url}{w}.{ext}",verify=False)
+                ans = get(f"{self.url}{w}.{ext}",verify=VERIFY)
                 self.requestsMade+=1
                 if ans.status_code in self.validStatusCodes:
                     self.extractData(f"{w}.{ext}",ans)
         self.finishedThreads+=1
 
-    def pathBuster00(self,arr):
-        for w in arr:
-            if STOP_THREADS_EVENT.is_set(): return
-            ans = get(f"{self.url}{w}",verify=False)
-            self.requestsMade+=1
-            if ans.status_code in self.validStatusCodes:
-                self.addFoundDir(w,ans)
-            for ext in self.extensions:
-                ans = get(f"{self.url}{w}.{ext}")
-                self.requestsMade+=1
-                if ans.status_code in self.validStatusCodes:
-                    self.addFoundDir(f"{w}.{ext}",ans)
-        self.finishedThreads+=1
-
     def pathBuster01(self,arr):
         for w in arr:
             if STOP_THREADS_EVENT.is_set(): return
-            ans = get(f"{self.url}{w}",verify=False)
+            ans = get(f"{self.url}{w}",verify=VERIFY)
+            self.requestsMade+=1
             if ans.status_code in self.validStatusCodes:
                 self.extractData(w,ans)
-            self.requestsMade+=1
         self.finishedThreads+=1
 
     def pathBuster10(self,arr):
         for w in arr:
             if STOP_THREADS_EVENT.is_set(): return
-            ans = get(f"{self.url}{w}",verify=False)
+            ans = get(f"{self.url}{w}",verify=VERIFY)
+            if ans.status_code in self.validStatusCodes:
+                self.addFoundDir(w,ans)
+            self.requestsMade+=1
+            for ext in self.extensions:
+                ans = get(f"{self.url}{w}",verify=VERIFY)
+                self.requestsMade+=1
+                if ans.status_code in self.validStatusCodes:
+                    self.addFoundDir(f"{w}.{ext}",ans)
+        self.finishedThreads+=1
+
+    def pathBuster00(self,arr):
+        for w in arr:
+            if STOP_THREADS_EVENT.is_set(): return
+            ans = get(f"{self.url}{w}",verify=VERIFY)
             self.requestsMade+=1
             if ans.status_code in self.validStatusCodes:
                 self.addFoundDir(w,ans)
-            for ext in self.extensions:
-                ans = get(f"{self.url}{w}.{ext}")
-                self.requestsMade+=1
-                if ans.status_code == 200:
-                    self.extractData(w,ans)
-        # Thread ended
         self.finishedThreads+=1
 
     def addFoundDir(self,path,ans):
-        self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
+        self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Length':ans.headers['Content-Length']})
     
     def extractData(self,path,ans):
         data = []
@@ -177,9 +173,9 @@ class WebScrapper(ArgumentParser):
             if matches:
                 data.append((rule," ".join(matches)))
         if data:
-            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length'],'Data extracted':data})
+            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Length':ans.headers['Content-Length'],'Data extracted':data})
         else:
-            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length']})
+            self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Length':ans.headers['Content-Length']})
 
     def printInfo(self):
         print("\n"+dumps(self.dataExtracted, sort_keys=False, indent=4))
@@ -207,7 +203,7 @@ class WebScrapper(ArgumentParser):
 
             # Keep main thread sleeping until others end or ctrl+c
             # is pressed, in that case the STOP_THREADS_EVENT will
-            # be set and threads will terminate their execution(line 91)
+            # be set and threads will terminate their execution
             while not STOP_THREADS_EVENT.is_set() and self.finishedThreads != self.threadC:
                 print(f"Requests: {self.requestsMade}/{total_requests}",end='\r')
                 sleep(1)
@@ -217,11 +213,18 @@ class WebScrapper(ArgumentParser):
             continue
         print(f"Requests: {self.requestsMade}/{total_requests}")
 
-# ctrl+c signal handler
-signal.signal(signal.SIGINT,ctrlC)
-# Create an WebScrapper instance that will parse arguments
-ws = WebScrapper()
-# Start threads
-ws.runThreads()
-# Print extracted data
-ws.printInfo()
+def main():
+    begTime = time()
+    # ctrl+c signal handler
+    signal.signal(signal.SIGINT,ctrlC)
+    # Create an WebScrapper instance that will parse arguments
+    ws = WebScrapper()
+    # Start threads
+    ws.runThreads()
+    # Print extracted data
+    ws.printInfo()
+    endTime = time()
+    print(f"Time taken => {round(endTime-begTime,6)}")
+
+if __name__ == "__main__":
+    main()
