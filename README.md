@@ -1,4 +1,5 @@
-
+# NOTE  
+At first I thought I wouldn't spend much more time reviewing the code and doing some changes but I've been last 2 days completly obsessed with performance improvement. But I haven't gotten much better results :(. I'll try to improve data manipulation using numpy/pandas this weekend(while also trying to keep pathbuster functions as clear as possible) and leave a basic but useful tool(hopefully)
 # WebScrapper
 Basic Python web scrapper which allows enumerating routes on a website and extract data using regex. Outputs found data (routes and regex matches) on a json format.  
 I'm willing to add stuff such as being able to receive a bunch of targets, maybe colored output?.  
