@@ -72,8 +72,7 @@ class ArgumentParser():
         if ISFILE(self.rules):
             self.rules = tuple(open(self.rules).read().split())
         else:
-            self.rules = tuple(self.rules.split(','))
-            
+            self.rules = self.rules.split(',')
 
         try:
             self.port = int(self.port)
@@ -153,7 +152,7 @@ class WebScrapper(ArgumentParser):
         for rule in self.rules:
             matches = findall(compile(rule),BeautifulSoup(ans.content,'html.parser').text)
             if matches:
-                data.append((rule," ".join(matches)))    
+                data.append((rule," ".join(matches)))
         if data:
             self.currentTarget['found routes'].append({'name':path,'status':ans.status_code,'Content type':ans.headers['Content-type'],'Length':ans.headers['Content-Length'],'Data extracted':data})
         else:
