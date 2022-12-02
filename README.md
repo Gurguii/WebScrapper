@@ -24,6 +24,7 @@ I'm willing to add stuff such as being able to receive a bunch of targets, maybe
 ```  
 #### Note: the -wl/--wordlist <file> option is mandatory
 ## Options  
+#### -target / --target <string,file,csv> - Target/s 
 #### -h / --help - Prints help message(not properly made yet) and exits.  
 #### -p / --port <int> - Sets target port, default 80  
 #### -t / --threads <int> - Sets amount of threads, default 10  
