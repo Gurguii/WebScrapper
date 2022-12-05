@@ -1,4 +1,4 @@
-from multiprocessing import Value, Pool, Array
+from multiprocessing import Value, Pool
 from time import sleep
 from requests import get
 from sys import exit as sysex, argv
