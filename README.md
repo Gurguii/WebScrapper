@@ -1,5 +1,5 @@
-# NOTE  
-At first I thought I wouldn't spend much more time reviewing the code and doing some changes but I've been last 2 days completly obsessed with performance improvement. But I haven't gotten much better results :(. I'll try to improve data manipulation using numpy/pandas this weekend(while also trying to keep pathbuster functions as clear as possible) and leave a basic but useful tool(hopefully)
+# PLEASE READ :)
+With the last commit I changed the code structure and added multiprocessing. Pros are now I got rid of the GLI and code is (I think) better structured and faster. Cons are It gave me a headache trying to change the old code(Threads => Processes) so I ended up starting from scratch(recycling some stuff such as ArgumentParser class) and I haven't made a Data Parser as good as I'd like to, but felt like this was a good enough change to commit it :)  
 # WebScrapper
 Basic Python web scrapper which allows enumerating routes on a website and extract data using regex. Outputs found data (routes and regex matches) on a json format.  
 I'm willing to add stuff such as being able to receive a bunch of targets, maybe colored output?.  
